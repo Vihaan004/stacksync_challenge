@@ -2,8 +2,6 @@
 
 Secure API service that executes arbitrary Python code in a sandboxed environment using Flask and nsjail.
 
-**Note: nsjail disabled on Cloud Run for compatibility; Cloud Run provides container-level isolation.**
-
 ## Service URL
 
 **Production:** `https://python-executor-310135046960.us-central1.run.app`
@@ -50,10 +48,10 @@ curl -X POST https://python-executor-310135046960.us-central1.run.app/execute \
 Run the service locally with a single command:
 
 ```bash
-docker run --privileged --rm -p 8080:8080 us-central1-docker.pkg.dev/scriptrunnerapi/cloud-run-source-deploy/python-executor:latest
+docker run --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --rm -p 8080:8080 us-central1-docker.pkg.dev/scriptrunnerapi/cloud-run-source-deploy/python-executor:latest
 ```
 
-> **Note:** The `--privileged` flag is required locally for nsjail to create security namespaces. This is not needed on Cloud Run.
+> **Optionally:** Use `--privileged` flag for more relaxed security for nsjail to create security namespaces. (not needed on Cloud Run)
 
 Then test it:
 
@@ -86,17 +84,16 @@ curl -X POST http://localhost:8080/execute \
 
 ## Security
 
-**Local Execution (Docker with --privileged):**
-- Scripts run in isolated nsjail sandbox with resource limits
-- Execution timeout: 15 seconds
-- Memory limit: 700MB
-
-**Cloud Run Execution:**
-- Cloud Run provides container-level isolation
-- Each request runs in an isolated container instance
-- Execution timeout: 15 seconds (enforced by Flask)
-- Memory limit: 512MB (Cloud Run configuration)
-- No persistent state between requests
+Scripts run in an isolated nsjail sandbox with:
+- **Seccomp filter**: Blocks socket, ptrace, kill, mount, and other dangerous syscalls
+- **Namespace isolation**: User namespace with UID/GID mapping
+- **Resource limits**: 
+  - Execution timeout: 15 seconds
+  - Memory limit: 700MB
+  - CPU limit: 10 seconds
+  - File size limit: 1024KB
+- **Read-only mounts**: System directories mounted read-only
+- **Network blocked**: Socket syscall returns ERRNO 13 (Permission denied)
 
 
 ## Brainstorm

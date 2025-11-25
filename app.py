@@ -21,18 +21,9 @@ def run_script(script):
     result_file.close()
     os.chmod(result_path, 0o666)
 
-    # Check if nsjail should be used (disabled on Cloud Run via env var)
-    # Cloud Run sets K_SERVICE environment variable
-    is_cloud_run = os.environ.get('K_SERVICE') is not None
-    use_nsjail = (not is_cloud_run) and os.path.exists('/usr/local/bin/nsjail') and os.path.exists('/app/nsjail.cfg')
-    
     # Map paths for nsjail namespace (host:/tmp/nsjail -> jail:/tmp)
-    if use_nsjail:
-        jail_script_path = script_path.replace(nsjail_tmp, "/tmp")
-        jail_result_path = result_path.replace(nsjail_tmp, "/tmp")
-    else:
-        jail_script_path = script_path
-        jail_result_path = result_path
+    jail_script_path = script_path.replace(nsjail_tmp, "/tmp")
+    jail_result_path = result_path.replace(nsjail_tmp, "/tmp")
 
     script_wrapper = f"""
 import json
@@ -56,39 +47,29 @@ if __name__ == '__main__':
     script_file.close()
     
     try:
-        if use_nsjail:
-            # Run with nsjail (local Docker)
-            process = subprocess.run(
-                [
-                    '/usr/local/bin/nsjail',
-                    '--config',
-                    '/app/nsjail.cfg',
-                    '--',
-                    '/usr/local/bin/python3',
-                    jail_script_path
-                ],
-                capture_output=True,
-                text=True,
-                timeout=15,
-                cwd='/tmp/nsjail'
-            )
-        else:
-            # Run directly without nsjail (Cloud Run provides isolation)
-            process = subprocess.run(
-                ['/usr/local/bin/python3', script_path],
-                capture_output=True,
-                text=True,
-                timeout=15,
-                cwd='/tmp/nsjail'
-            )
+        # Always run with nsjail
+        process = subprocess.run(
+            [
+                '/usr/local/bin/nsjail',
+                '--config',
+                '/app/nsjail.cfg',
+                '--',
+                '/usr/local/bin/python3',
+                jail_script_path
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            cwd='/tmp/nsjail'
+        )
         
         # debug
-        # if process.returncode != 0:
-        #     error_msg = process.stderr.strip() or "Script execution failed"
-        #     return {
-        #         "error": error_msg,
-        #         "stdout": process.stdout.strip()
-        #     }
+        if process.returncode != 0:
+            error_msg = process.stderr.strip() or "Script execution failed"
+            return {
+                "error": error_msg,
+                "stdout": process.stdout.strip()
+            }
 
         # get stdout
         stdout = process.stdout.strip()
