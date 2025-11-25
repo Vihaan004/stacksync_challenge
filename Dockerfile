@@ -1,47 +1,41 @@
-FROM python:3.11-slim
+# Stage 1: Build nsjail
+FROM python:3.11-slim AS builder
 
-# Install dependencies for nsjail
+# Install build dependencies
 RUN apt-get update && apt-get install -y \
-    autoconf \
-    bison \
-    flex \
-    gcc \
-    g++ \
-    git \
-    libnl-route-3-dev \
-    libtool \
-    make \
-    pkg-config \
-    protobuf-compiler \
-    libprotobuf-dev \
+    autoconf bison flex gcc g++ git libprotobuf-dev libnl-route-3-dev \
+    libtool make pkg-config protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
-# Clone and build nsjail
-RUN git clone https://github.com/google/nsjail.git /nsjail && \
-    cd /nsjail && \
+# Build nsjail
+RUN git clone --depth 1 https://github.com/google/nsjail.git /nsjail_src && \
+    cd /nsjail_src && \
     make && \
-    mv /nsjail/nsjail /usr/local/bin/ && \
-    rm -rf /nsjail
+    strip /nsjail_src/nsjail
 
-# Set working directory
+# Stage 2: Runtime image
+FROM python:3.11-slim
+
+# Install only runtime dependencies for nsjail (no build tools!)
+RUN apt-get update && apt-get install -y \
+    libprotobuf32 libnl-route-3-200 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy only the nsjail binary from builder stage
+COPY --from=builder /nsjail_src/nsjail /usr/local/bin/nsjail
+
+# Setup application
 WORKDIR /app
-
-# Copy requirements and install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install commonly used libraries for user scripts
-RUN pip install --no-cache-dir pandas numpy
+# Setup nsjail temp directory
+RUN mkdir -p /tmp/nsjail && chmod 777 /tmp/nsjail
 
 # Copy application files
 COPY app.py .
 COPY nsjail.cfg .
 
-# Create necessary directories
-RUN mkdir -p /tmp/nsjail
-
-# Expose port
+# Expose port and run
 EXPOSE 8080
-
-# Run the application
-CMD ["python", "app.py"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--timeout", "30", "app:app"]
