@@ -1,0 +1,17 @@
+## Design
+- app.py
+    - Flask app with a single endpoint /execute
+    - parse incoming JSON request
+    - input validation
+    - nsjail subprocess to run script
+    - return formatted JSON response
+- Dockerfile 
+    - base image (lightweight python)
+    - required dependecies
+    - nsjail dependencies and build
+    - copy app.py and requirements.txt
+    - expose port 8080
+- requirements.txt
+- nsjail.cfg
+    - sandboxing config
+    - decide resource limits
