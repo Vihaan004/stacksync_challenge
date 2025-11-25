@@ -7,11 +7,11 @@ from flask import Flask, request, jsonify
 app = Flask(__name__)
 
 def run_script(script):
-    # Create /tmp/nsjail directory if it doesn't exist
+    # Create temp directory
     nsjail_tmp = "/tmp/nsjail"
     os.makedirs(nsjail_tmp, exist_ok=True)
     
-    # Temp files for script and result (in nsjail tmp)
+    # Temp files for script and result
     script_file = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, dir=nsjail_tmp)
     script_path = script_file.name
     os.chmod(script_path, 0o644)
@@ -21,7 +21,19 @@ def run_script(script):
     result_file.close()
     os.chmod(result_path, 0o666)
 
-    # Use actual paths (no namespace remapping needed)
+    # Check if nsjail should be used (disabled on Cloud Run via env var)
+    # Cloud Run sets K_SERVICE environment variable
+    is_cloud_run = os.environ.get('K_SERVICE') is not None
+    use_nsjail = (not is_cloud_run) and os.path.exists('/usr/local/bin/nsjail') and os.path.exists('/app/nsjail.cfg')
+    
+    # Map paths for nsjail namespace (host:/tmp/nsjail -> jail:/tmp)
+    if use_nsjail:
+        jail_script_path = script_path.replace(nsjail_tmp, "/tmp")
+        jail_result_path = result_path.replace(nsjail_tmp, "/tmp")
+    else:
+        jail_script_path = script_path
+        jail_result_path = result_path
+
     script_wrapper = f"""
 import json
 import sys
@@ -33,7 +45,7 @@ if __name__ == '__main__':
             print("Error: 'main' is not a function", file=sys.stderr)
             sys.exit(1)
         result = main()
-        with open('{result_path}', 'w') as f:
+        with open('{jail_result_path}', 'w') as f:
             json.dump(result, f)
     except Exception as e:
         print(f"Error in main(): {{e}}", file=sys.stderr)
@@ -43,30 +55,40 @@ if __name__ == '__main__':
     script_file.write(script_wrapper)
     script_file.close()
     
-    # Run the script with nsjail
     try:
-        process = subprocess.run(
-            [
-                '/usr/local/bin/nsjail',
-                '--config',
-                '/app/nsjail.cfg',
-                '--',
-                '/usr/local/bin/python3',
-                script_path
-            ],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            cwd='/tmp/nsjail'
-        )
+        if use_nsjail:
+            # Run with nsjail (local Docker)
+            process = subprocess.run(
+                [
+                    '/usr/local/bin/nsjail',
+                    '--config',
+                    '/app/nsjail.cfg',
+                    '--',
+                    '/usr/local/bin/python3',
+                    jail_script_path
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                cwd='/tmp/nsjail'
+            )
+        else:
+            # Run directly without nsjail (Cloud Run provides isolation)
+            process = subprocess.run(
+                ['/usr/local/bin/python3', script_path],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                cwd='/tmp/nsjail'
+            )
         
         # debug
-        if process.returncode != 0:
-            error_msg = process.stderr.strip() or "Script execution failed"
-            return {
-                "error": error_msg,
-                "stdout": process.stdout.strip()
-            }
+        # if process.returncode != 0:
+        #     error_msg = process.stderr.strip() or "Script execution failed"
+        #     return {
+        #         "error": error_msg,
+        #         "stdout": process.stdout.strip()
+        #     }
 
         # get stdout
         stdout = process.stdout.strip()
