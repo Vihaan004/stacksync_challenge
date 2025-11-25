@@ -7,29 +7,37 @@ from flask import Flask, request, jsonify
 app = Flask(__name__)
 
 def run_script(script):
-    # Temp files for script and result
-    script_file = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False)
+    # Create /tmp/nsjail directory if it doesn't exist
+    nsjail_tmp = "/tmp/nsjail"
+    os.makedirs(nsjail_tmp, exist_ok=True)
+    
+    # Temp files for script and result (in nsjail tmp)
+    script_file = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, dir=nsjail_tmp)
     script_path = script_file.name
-    result_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
+    result_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, dir=nsjail_tmp)
     result_path = result_file.name
     result_file.close()
+    
+    # Map the temp path to the jail path
+    jail_script_path = script_path.replace(nsjail_tmp, "/tmp")
+    jail_result_path = result_path.replace(nsjail_tmp, "/tmp")
 
     script_wrapper = f"""
 import json
 {script}
 if __name__ == '__main__':
     result = main()
-    with open('{result_path}', 'w') as f:
+    with open('{jail_result_path}', 'w') as f:
         json.dump(result, f)
 """
     
     script_file.write(script_wrapper)
     script_file.close()
     
-    # Run the script
+    # Run the script with nsjail
     try:
         process = subprocess.run(
-            ['python3', script_path],
+            ['nsjail', '-C', '/nsjail.cfg', '--', 'python3', jail_script_path],
             capture_output=True,
             text=True,
             timeout=10
